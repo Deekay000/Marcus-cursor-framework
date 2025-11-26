@@ -26,16 +26,3 @@ scripts/scenarios/
 # OS
 .DS_Store
 Thumbs.db
-
-# Junk files
--H
--d
-package-lock.json
-
-# Build artifacts
-*.pyc
-*.pyo
-*.pyd
-dist/
-build/
-*.egg-info/

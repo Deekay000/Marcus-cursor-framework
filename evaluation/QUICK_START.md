@@ -146,5 +146,3 @@ Raters: claude, gpt4, gemini
 5. See which model ranks #1!
 
 
-
-

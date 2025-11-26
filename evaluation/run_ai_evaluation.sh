@@ -25,5 +25,3 @@ fi
 python "$SCRIPT_DIR/ai_raters.py" --no-gemini "$@"
 
 
-
-

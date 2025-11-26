@@ -42,11 +42,17 @@ class MessageRequest(BaseModel):
     )
 
 class ChatResponse(BaseModel):
-    """Complete response including Marcus's reply and emotional state."""
+    """Complete response including Marcus's reply, emotional state, and introspection data."""
     response: str
-    pad_state: Dict[str, float]
-    mood_label: str
-    message_id: Optional[uuid.UUID] = None  # ID of the user message
+    pad: Dict[str, float]  # Frontend expects "pad" not "pad_state"
+    quadrant: str  # Frontend expects "quadrant" not "mood_label"
+    message_id: Optional[uuid.UUID] = None
+    # Introspection fields
+    strategy_used: Optional[str] = None
+    effectiveness: Optional[float] = None
+    patterns_detected: Optional[List[str]] = None
+    relationship_stage: Optional[str] = None
+    warning_flags: Optional[List[str]] = None
 
 class MessageResponse(BaseModel):
     message_id: uuid.UUID
@@ -104,8 +110,13 @@ async def simple_chat(
         
         return ChatResponse(
             response=result["response"],
-            pad_state=result["pad"],
-            mood_label=result["quadrant"]
+            pad=result["pad"],
+            quadrant=result["quadrant"],
+            strategy_used=result.get("strategy_used"),
+            effectiveness=result.get("effectiveness"),
+            patterns_detected=result.get("patterns_detected"),
+            relationship_stage=result.get("relationship_stage"),
+            warning_flags=result.get("warning_flags")
         )
         
     except Exception as e:

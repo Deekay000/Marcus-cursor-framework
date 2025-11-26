@@ -159,3 +159,62 @@
 - Must optimize aggressively
 - May need to cut features if latency suffers
 
+---
+
+### DEC-007: Introspection-Driven Architecture
+**Date:** 2025-11-24  
+**Status:** APPROVED  
+**Context:** Marcus needs to adapt and learn from interactions, not just react to immediate input. Traditional chatbots lack memory and pattern recognition, making them repetitive and ineffective.  
+**Decision:** Implement mandatory introspection layer where Marcus queries historical data before every response and measures effectiveness after.  
+**Rationale:**
+- **Self-awareness beats reactivity**: LLMs are stateless by default. Marcus needs to query what worked before.
+- **Data-driven decisions**: Select communication strategies based on effectiveness scores, not random.
+- **Continuous learning**: Each interaction updates strategy effectiveness, patterns, and behavioral models.
+- **Prevents drift**: Without feedback loops, AI assistants go off-topic and repeat mistakes.
+- **Question-driven development**: Every database table must answer specific real-time questions.
+
+**Architecture:**
+```
+DialogueGenerator (Brain)
+    ↓
+IntrospectionService (Nervous System)
+    ↓
+[PatternRepository, StrategyRepository, PADStateRepository, BehavioralRepository]
+    ↓
+[Database: patterns, strategies, pad_states, behavioral_states]
+```
+
+**Introspection Flow:**
+1. **Before Response**: Query patterns, strategies, emotional trajectory, relationship stage
+2. **Strategy Selection**: Use data to choose approach (supportive/energizing/balanced/etc.)
+3. **Generate Response**: Context-aware prompt with strategy + patterns + warnings
+4. **After Response**: Measure effectiveness, update strategy scores, detect new patterns
+5. **Record State**: Save real behavioral state (not hardcoded)
+
+**Alternatives Considered:**
+- **Reactive-only (no introspection)**: Simpler but Marcus would never learn or adapt
+- **ML-based pattern detection**: More accurate but adds latency and complexity (use later)
+- **Post-conversation analytics**: Useful for humans but doesn't help Marcus adapt in real-time
+- **External memory service**: Adds network latency; keeping it in-database is faster
+
+**Consequences:**
+- **+50-100ms latency per response** (introspection queries): Acceptable within 2s budget
+- **Complexity increase**: 3 new repositories + IntrospectionService + updated generator
+- **Learning curves**: Strategy effectiveness improves over time (cold start problem)
+- **Data requirements**: Patterns/strategies meaningful only after 10+ interactions per user
+- **Maintenance**: Must ensure introspection queries stay <50ms (index properly)
+- **Development discipline**: All future features must follow "introspection-driven" protocol
+
+**Implementation Files:**
+- `src/domain/repositories.py`: Added PatternRepository, StrategyRepository, enhanced PADStateRepository
+- `src/domain/introspection.py`: New IntrospectionService (Marcus's nervous system)
+- `src/dialogue/generator.py`: Updated DialogueGenerator with mandatory introspection
+- `AGENTS.md`: Added introspection rules and checklist
+
+**Success Metrics:**
+- Strategy effectiveness scores increase over time (learning curve)
+- Relationship stage evolves dynamically (Stranger → Acquaintance → Trusted)
+- Pattern confidence scores reflect real behaviors
+- Crisis detection and intervention reduce negative streaks
+- No hardcoded behavioral states in production responses
+
