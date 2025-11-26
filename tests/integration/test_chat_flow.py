@@ -413,3 +413,5 @@ class TestDatabaseIntegration:
         assert len(history) == 2
         assert history[0].role == "assistant"  # Newest first
         assert history[1].role == "user"
+
+

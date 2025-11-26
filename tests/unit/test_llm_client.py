@@ -209,3 +209,5 @@ class TestLLMClientInterface:
             )
             client = OpenAIClient(api_key="test")
             assert isinstance(client, LLMClient)
+
+

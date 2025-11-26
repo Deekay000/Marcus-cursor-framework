@@ -266,3 +266,5 @@ class TestPADRealism:
         # Should have moved significantly towards baseline
         assert current["pleasure"] > -0.9  # Less sad
         assert current["arousal"] > -0.5  # More energized
+
+
