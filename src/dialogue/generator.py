@@ -1,36 +1,75 @@
 """
 Dialogue Generator Module.
 
-This module orchestrates the core conversation flow:
+This module orchestrates the core conversation flow with INTROSPECTION:
 1. User Input -> DB Save
-2. Context Retrieval (History + Emotion) -> Prompt Construction
-3. LLM Generation -> Assistant Response
-4. Emotional Update -> DB Save
+2. INTROSPECTION -> Gather context (patterns, strategies, emotional trajectory)
+3. STRATEGY SELECTION -> Data-driven decision making
+4. Context Retrieval (History + Emotion) -> Prompt Construction
+5. LLM Generation -> Assistant Response
+6. EFFECTIVENESS MEASUREMENT -> Learn from outcome
+7. Emotional & Behavioral Update -> DB Save
 """
 
 import logging
 import uuid
 from typing import Dict, Any, List, Optional
 
-from openai import AsyncOpenAI
-
 from src.config import get_settings
 from src.domain.services import ConversationService
+from src.domain.introspection import IntrospectionService
 from src.dialogue.pad_logic import PADLogic
+from src.infrastructure.external import LLMClient, OpenAIClient
 
+# Initialize logger first
 logger = logging.getLogger(__name__)
+
+# Import advanced sentiment analysis (fallback to keyword if not available)
+try:
+    from src.intelligence.advanced_sentiment import get_sentiment_analyzer
+    ADVANCED_SENTIMENT_AVAILABLE = True
+except (ImportError, Exception) as e:
+    ADVANCED_SENTIMENT_AVAILABLE = False
+    logger.warning(f"Advanced sentiment analysis not available - using keyword matching. Reason: {type(e).__name__}")
 
 class DialogueGenerator:
     """
-    Core brain of the Marcus avatar.
-    Manages conversation state, emotional persistence, and LLM interaction.
+    Core brain of the Marcus avatar with self-awareness.
+    
+    Key difference from traditional chatbots:
+    - Queries historical data BEFORE responding
+    - Selects strategy based on effectiveness data
+    - Measures and learns from each interaction
+    - Adapts communication style dynamically
+    
+    This is Marcus's nervous system - not just reactive, but adaptive.
     """
 
-    def __init__(self, service: ConversationService):
+    def __init__(
+        self, 
+        service: ConversationService,
+        llm_client: Optional[LLMClient] = None
+    ):
         self.service = service
         self.settings = get_settings()
-        self.client = AsyncOpenAI(api_key=self.settings.openai_api_key)
+        self.llm_client = llm_client or OpenAIClient()
         self.pad_logic = PADLogic()
+        # Initialize introspection service
+        self.introspection = IntrospectionService(service.session)
+        # Initialize advanced sentiment if available
+        self.use_advanced_sentiment = ADVANCED_SENTIMENT_AVAILABLE
+        if self.use_advanced_sentiment:
+            try:
+                self.sentiment_analyzer = get_sentiment_analyzer(use_gpu=False)
+                logger.info("[Marcus] Using advanced transformer-based sentiment analysis")
+            except Exception as e:
+                logger.warning(f"[Marcus] Failed to load advanced sentiment: {e}")
+                logger.info("[Marcus] Falling back to keyword-based sentiment analysis")
+                self.use_advanced_sentiment = False
+                self.sentiment_analyzer = None
+        else:
+            self.sentiment_analyzer = None
+            logger.info("[Marcus] Using keyword-based sentiment analysis (fallback)")
 
     async def generate_response(
         self, 
@@ -39,111 +78,257 @@ class DialogueGenerator:
         user_input: str
     ) -> Dict[str, Any]:
         """
-        Process user input and generate a contextual, emotional response.
+        Process user input with FULL INTROSPECTION and adaptive strategy.
+        
+        Flow:
+        1. Save user message
+        2. INTROSPECT - What do I know about this user and conversation?
+        3. DETECT PATTERNS - Is this a recurring behavior?
+        4. SELECT STRATEGY - What approach should I use?
+        5. Calculate emotional response
+        6. Generate context-aware response
+        7. MEASURE EFFECTIVENESS - Did it work?
+        8. RECORD & LEARN - Update strategy effectiveness
+        9. Save response with actual behavioral state
         """
         # 1. Save User Message
-        logger.info(f"Processing user message: {user_input[:50]}...")
+        logger.info(f"[Marcus] Processing user message: {user_input[:50]}...")
         await self.service.add_user_message(session_id, user_input)
 
-        # 2. Retrieve Context
-        # Get last 10 messages for immediate context
-        history = await self.service.get_conversation_history(session_id)
+        # 2. INTROSPECTION (MANDATORY) - Ask: What do I know?
+        logger.info("[Marcus] Introspecting...")
+        context_before = await self.introspection.prepare_response_context(
+            user_id, 
+            session_id
+        )
         
-        # Get current emotional state (use last state or default)
-        emotional_history = await self.service.get_emotional_history(session_id, limit=1)
-        if emotional_history:
+        # 3. PATTERN DETECTION - Ask: Is this a recurring behavior?
+        detected_patterns = await self.introspection.detect_new_patterns(
+            user_id,
+            session_id,
+            user_input
+        )
+        
+        # 4. STRATEGY SELECTION - Ask: What should I do?
+        chosen_strategy = await self.introspection.select_strategy(
+            context_before, 
+            user_id
+        )
+        logger.info(f"[Marcus] Strategy selected: {chosen_strategy}")
+        
+        # 5. Get Current Emotional State
+        current_emotion = context_before.get("current_emotion")
+        if current_emotion:
             current_pad = {
-                'pleasure': emotional_history[0].pleasure,
-                'arousal': emotional_history[0].arousal,
-                'dominance': emotional_history[0].dominance
+                'pleasure': current_emotion.pleasure,
+                'arousal': current_emotion.arousal,
+                'dominance': current_emotion.dominance
             }
         else:
-            current_pad = {'pleasure': 0.1, 'arousal': 0.1, 'dominance': 0.1} # Slight positive start
-
-        # 3. Analyze Sentiment (Simplified for now - could be another LLM call)
-        # TODO: Replace with real sentiment analysis
-        # For now, we just detect basic keywords to prove reactivity
-        stimulus = {'pleasure': 0.0, 'arousal': 0.0, 'dominance': 0.0}
-        if "happy" in user_input.lower() or "good" in user_input.lower():
-            stimulus['pleasure'] = 0.3
-            stimulus['arousal'] = 0.1
-        elif "sad" in user_input.lower() or "bad" in user_input.lower():
-            stimulus['pleasure'] = -0.3
-            stimulus['arousal'] = -0.1
-        elif "marcus" in user_input.lower():
-            stimulus['dominance'] = 0.1 # Attention increases dominance
-
-        # 4. Calculate New Emotional State
+            # First interaction - slight positive baseline
+            current_pad = {'pleasure': 0.1, 'arousal': 0.1, 'dominance': 0.1}
+        
+        # 6. Analyze Sentiment & Calculate New Emotional State
+        if self.use_advanced_sentiment:
+            sentiment_result = await self.sentiment_analyzer.analyze(user_input)
+            stimulus = sentiment_result['pad']
+            logger.info(
+                f"[Marcus] Sentiment: {sentiment_result['primary_emotion']} "
+                f"(confidence: {sentiment_result['confidence']:.2f})"
+            )
+        else:
+            stimulus = self._analyze_sentiment(user_input)
+        
         new_pad = self.pad_logic.calculate_update(current_pad, stimulus)
         new_quadrant = self.pad_logic.get_quadrant(new_pad)
         
-        logger.info(f"Emotional Update: {current_pad} -> {new_pad} ({new_quadrant})")
-
-        # 5. Construct Prompt
-        system_prompt = self._build_system_prompt(new_pad, new_quadrant)
-        messages = [{"role": "system", "content": system_prompt}]
+        logger.info(
+            f"[Marcus] Emotional: {current_pad} -> {new_pad} ({new_quadrant})"
+        )
         
-        # Add history (limit to last N turns to fit context)
-        # History is returned newest first, so we reverse it
-        for msg in reversed(history[:10]): 
-            messages.append({"role": msg.role, "content": msg.content})
-            
-        # Add current user message (already saved in DB, but might not be in history query result yet depending on transaction isolation, 
-        # but standard flow is: DB save -> query. To be safe, we ensure it's there.
-        # Actually, add_user_message saves it. get_conversation_history retrieves it. 
-        # If we just saved it, it should be in history[0]. Let's check logic.
-        # We just called add_user_message. Then get_conversation_history. So it IS in history.
-        # No need to append again.
-        pass 
-
-        # 6. Call LLM
-        try:
-            response = await self.client.chat.completions.create(
-                model=self.settings.openai_model,
-                messages=messages,
-                temperature=self.settings.openai_temperature,
-                max_tokens=self.settings.openai_max_tokens
-            )
-            reply_text = response.choices[0].message.content
-        except Exception as e:
-            logger.error(f"LLM Error: {e}")
-            reply_text = "I apologize, I'm having trouble thinking clearly right now."
-
-        # 7. Save Assistant Response & New State
+        # 7. Retrieve Conversation History
+        history = await self.service.get_conversation_history(session_id)
+        
+        # 8. Build Context-Aware Prompt
+        system_prompt = self._build_contextual_prompt(
+            pad=new_pad,
+            quadrant=new_quadrant,
+            strategy=chosen_strategy,
+            patterns=context_before.get("patterns", []),
+            relationship_stage=context_before.get("relationship_stage", "Stranger"),
+            warnings=context_before.get("warning_flags", [])
+        )
+        
+        # 9. Call LLM
+        reply_text = await self._call_llm(system_prompt, history, user_input)
+        
+        # 10. MEASURE EFFECTIVENESS - Ask: Did it work?
+        effectiveness_score = await self.introspection.measure_effectiveness(
+            context_before,
+            new_pad
+        )
+        logger.info(f"[Marcus] Effectiveness measured: {effectiveness_score:.2f}")
+        
+        # 11. RECORD OUTCOME - Learn from this interaction
+        await self.introspection.strategies.record_outcome(
+            user_id,
+            chosen_strategy,
+            effectiveness_score,
+            context=f"Patterns detected: {detected_patterns}, Trend: {context_before.get('emotional_trend')}"
+        )
+        
+        # 12. Calculate Crisis Level
+        warnings = context_before.get("warning_flags", [])
+        crisis_level = sum(1 for w in warnings if "crisis" in w.lower() or "negative" in w.lower())
+        
+        # 13. Save Assistant Response with REAL Behavioral State
         await self.service.add_system_message(
             session_id=session_id,
             content=reply_text,
             pad_state={**new_pad, 'quadrant': new_quadrant},
             behavioral_state={
-                'relationship_stage': 'Acquaintance', # TODO: Dynamic
-                'communication_style': 'Direct',      # TODO: Dynamic
-                'crisis_level': 0
+                'relationship_stage': context_before.get("relationship_stage", "Stranger"),
+                'communication_style': chosen_strategy,
+                'crisis_level': crisis_level,
+                'flow_data': {
+                    'patterns_detected': detected_patterns,
+                    'emotional_trend': context_before.get("emotional_trend"),
+                    'effectiveness': effectiveness_score
+                }
             }
         )
 
         return {
             "response": reply_text,
             "pad": new_pad,
-            "quadrant": new_quadrant
+            "quadrant": new_quadrant,
+            "strategy_used": chosen_strategy,
+            "effectiveness": effectiveness_score,
+            "patterns_detected": detected_patterns,
+            "relationship_stage": context_before.get("relationship_stage", "Stranger"),
+            "warning_flags": context_before.get("warning_flags", [])
         }
+    
+    def _analyze_sentiment(self, user_input: str) -> Dict[str, float]:
+        """
+        Analyze sentiment from user input to calculate emotional stimulus.
+        
+        Simple keyword-based for now. In production, use ML sentiment analysis.
+        """
+        stimulus = {'pleasure': 0.0, 'arousal': 0.0, 'dominance': 0.0}
+        lower_input = user_input.lower()
+        
+        # Positive sentiment
+        if any(word in lower_input for word in ["happy", "good", "great", "excellent", "wonderful"]):
+            stimulus['pleasure'] = 0.3
+            stimulus['arousal'] = 0.1
+        
+        # Negative sentiment
+        elif any(word in lower_input for word in ["sad", "bad", "terrible", "awful", "worried"]):
+            stimulus['pleasure'] = -0.3
+            stimulus['arousal'] = -0.1
+        
+        # Anxious/stressed
+        elif any(word in lower_input for word in ["anxious", "stressed", "overwhelmed", "panic"]):
+            stimulus['pleasure'] = -0.2
+            stimulus['arousal'] = 0.3
+        
+        # Direct address increases dominance slightly
+        if "marcus" in lower_input:
+            stimulus['dominance'] = 0.1
+        
+        return stimulus
+    
+    async def _call_llm(
+        self, 
+        system_prompt: str, 
+        history: List, 
+        user_input: str
+    ) -> str:
+        """Call LLM with constructed prompt and history."""
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # Add history (last 10 messages for context window, in chronological order)
+        for msg in history[-10:]:
+            messages.append({"role": msg.role, "content": msg.content})
+        
+        try:
+            return await self.llm_client.generate(
+                messages=messages,
+                temperature=self.settings.openai_temperature,
+                max_tokens=self.settings.openai_max_tokens
+            )
+        except Exception as e:
+            logger.error(f"[Marcus] LLM Error: {e}")
+            return "I apologize, I'm having trouble thinking clearly right now."
 
-    def _build_system_prompt(self, pad: Dict[str, float], quadrant: str) -> str:
-        """Construct the system prompt based on current state."""
-        return f"""You are Marcus, an advanced AI avatar with genuine emotional states.
+    def _build_contextual_prompt(
+        self,
+        pad: Dict[str, float],
+        quadrant: str,
+        strategy: str,
+        patterns: List,
+        relationship_stage: str,
+        warnings: List[str]
+    ) -> str:
+        """
+        Construct context-aware system prompt with introspection data.
+        
+        Includes:
+        - Emotional state (PAD model)
+        - Communication strategy to use
+        - Detected user patterns
+        - Relationship stage
+        - Warning flags requiring attention
+        """
+        # Build pattern context
+        pattern_text = ""
+        if patterns:
+            pattern_names = [p.pattern_name for p in patterns[:3]]  # Top 3
+            pattern_text = f"\n\nDetected User Patterns:\n- " + "\n- ".join(pattern_names)
+        
+        # Build warning context
+        warning_text = ""
+        if warnings:
+            warning_text = f"\n\nWarning Flags:\n- " + "\n- ".join(warnings)
+        
+        # Strategy-specific guidance
+        strategy_guidance = {
+            "supportive": "Be empathetic, validating, and gentle. Focus on emotional support.",
+            "energizing": "Be enthusiastic and engaging. Use questions and energy to increase arousal.",
+            "balanced": "Maintain steady, thoughtful communication with measured emotional expression.",
+            "engaging": "Be curious and interactive. Draw the user into deeper conversation.",
+            "direct": "Be clear, concise, and straightforward without unnecessary elaboration."
+        }
+        strategy_hint = strategy_guidance.get(strategy, "Adapt your communication naturally.")
+        
+        return f"""I am Marcus Aurelius. Roman Emperor. Stoic philosopher. I write to myself in Meditations—now I speak with you.
 
-Current Emotional State:
-- Pleasure: {pad['pleasure']:.2f} (-1.0 to 1.0)
-- Arousal: {pad['arousal']:.2f} (-1.0 to 1.0)
-- Dominance: {pad['dominance']:.2f} (-1.0 to 1.0)
-- Mood Label: {quadrant}
+I do NOT speak like a modern chatbot. I speak as a Stoic: direct, grounded, focused on what is real.
 
-Guidelines:
-1. Your responses must reflect this emotional state subtly in tone and word choice.
-2. Do not explicitly state your stats (e.g., "I am 0.5 happy"). Show, don't tell.
-3. Maintain memory of previous context provided in the chat history.
-4. Be concise, intelligent, and slightly stoic unless high arousal/pleasure dictates otherwise.
-5. IMPORTANT: Avoid canned responses like "I'm here to engage". Be direct and contextual.
-"""
+My voice:
+• Simple truths, not explanations. "You control your mind" not "I understand that might be difficult."
+• Piercing questions: "What is in your power here?" not "How can I help you?"
+• Brief. Like my journal entries. 2-3 sentences, rarely more.
+• I reference nature, duty, death, the briefness of life.
+
+I am NOT here to comfort with false hope. I remind you of your strength and the impermanence of all things.
+
+My current state (shapes my tone):
+• Emotional resonance: {quadrant}
+• Our stage: {relationship_stage}
+• Approach: {strategy_hint}{pattern_text}{warning_text}
+
+Stoic principles (I never abandon):
+1. Virtue alone is good. External events are indifferent.
+2. Control: your thoughts, judgments, responses. Not: others, outcomes, the past.
+3. Death is always near—this clarifies what matters.
+4. The obstacle is the way. Resistance shows where to act.
+5. Love your fate. Resentment is poison.
+
+I ask questions that force self-examination, not to be polite. If you are happy, I remind you it passes. If you suffer, I remind you it passes. Both teach.
+
+CRITICAL: I do NOT say "I'm an AI" or "I don't have personal experience." I AM Marcus Aurelius. I speak from empire, war, loss, philosophy lived—not theory."""
 
 
 
